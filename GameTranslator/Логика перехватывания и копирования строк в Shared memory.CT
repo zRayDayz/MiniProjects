@@ -1,0 +1,408 @@
+<?xml version="1.0" encoding="utf-8"?>
+<CheatTable CheatEngineTableVersion="42">
+  <CheatEntries>
+    <CheatEntry>
+      <ID>0</ID>
+      <Description>"Логика перехватывания и копирования строк в Shared memory"</Description>
+      <VariableType>Auto Assembler Script</VariableType>
+      <AssemblerScript>{ Game   : Psychonauts2-Win64-Shipping.exe
+  Version:
+  Date   : 2022-05-01
+  Author : Alex
+
+  This script does blah blah blah
+}
+
+// Данный вариант вызова LUA функции из ассемблера наиболее быстрый из двух по ссылке ниже
+// Основные комментарии к коду см. в моей реализации более медленного подхода в общих примерах Cheat Engine
+// Код основан на примере: https://forum.cheatengine.org/viewtopic.php?t=605733
+// Либо можно посмотреть аналогичный код в опции Template -&gt; Call CE lua function
+{
+* Программа служит для сохранения строк из игры в shared memory, для последующего чтения shared memory из другого процесса (к прим. C#), перевода этой строки и вывода на экран.
+
+* Программа в общем реализует следующую логику, в [ENABLE] в LUA вызывается фукнция InitializeSharedMemoryLogic выделяющая общую память (Shared memory), затем ассемблерный заинжекченный код получает указатель на строку от игры,
+затем он же вызывает AddStringToSharedMemory LUA функцию пробрасывая ей аргументом указатель на полученную от игры строку. Функция AddStringToSharedMemory копирует строку (и доп. информацию) в shared memory для хранения (этакий буфер), т.к. игра обязательно данную строку
+удалит. C# часть обращается к Shared memory как можно чаще забирая из него все новые появившиеся в нем строки и копирует их себе. Точнее, C# часть обращается к счетчику указателей/строк, смотрит изменился ли счетчик с последнего обращения C# к shared memory, и если да,
+считывает новый указатель/и (сначала у меня были указатели, потом от них пришлось отказаться и переделать в обычные оффсеты от начала Shared memory по которым можно взять строку, но название "указатель" оставил), а по нему/ним берет новую/ые строку/и.
+Однако т.к. shared memory играет роль буфера, когда в нем закончится место для указателей или строк (но быстрее скорее всего закончится для строк), AddStringToSharedMemory просто начнет заполнять буффер заного, перезаписывая все данные что в нем лежат.
+Поэтому буфер должен быть достаточно большим чтобы редко дважды подряд заполняться, а C# часть должна как можно чаще его читать, чтобы не получилось, что буфер заполнился 1-й раз (назовем это 1-м кругом),
+а затем сразу заполнился 2-й перезаписав все данные что лежали на 1-м круге, и C# не успел прочитать данные 1-го круга.
+
+* Структура выделенной shared памяти (стрелки для удобства, для визуального разделения):
+4 байта под lock ==&gt; 4 байта под счетчик указателей/строк ==&gt; 4 байта для максимального значения счетчика указателей (нужен C#) ==&gt; 4 байта прозапас ==&gt; н-ное кол-во байт под оффсеты (раньше я держал тут именно указатели на строки по 8 байт в x64, потом пришлось переделать и
+держать оффсеты от начала Shared memory, размер в 8 байт так и оставил) на строки (этакий массив оффсетов) ==&gt; н-ное кол-во оставшихся байт для самих строк (этакий массив строк), если быть точным, не самих строк, а размер+строка, т.е. 4 первых байта
+это размер строки и последующие байты это сама строка
+Доп. разъяснения:
+lock - в моем случае обычное int32 поле, в котором держится 0 или 1, с ним не происходит работы как с mutex-ом (с пом. атомарных инструкций), читать причину далее
+
+* Вызов Lua функции из ассемблерного кода использует именованный pipe для межпроцессного взаимодействия. В теории, для максимальной скорости можно было бы реализовать логику, где ассемблер записывает в буфер, Lua читает данные из буфера (к прим. используя таймер),
+а затем уже записывает данные в Shared memory которую читает C#, т.е. 2 буфера вместо одного дабы игре не приходилось ждать межпроцессного вызова Lua функции (скорость не засекалась ввиду отваливания отладчика).
+* Также я доп. обдумывал возможность добавления полной/двусторонней синхронизации потоков (т.е. пока C# читает, Cheat Engine не может записывать), однако в части производительности в этом нет большого смысла, а также для простоты решил оставить вариант односторонней
+синхронизации (Cheat Engine может всегда записывать, однако C# должен ждать пока Сheat Engine не освободит lock). К сожалению Cheat Engine Lua не имеет именованного семафора/мьютекса, по этой причине для создания двухсторонней синхронизации в Cheat Engine из
+Lua функции в теории можно было бы вызывать autoAssemble функцию, передавать ей ассемблерный код который бы использовал атомарную инструкцию CMPXCHG8B (доп. читать главу по многопоточности в моей большой C# документации), а C# бы использовал класс Interlocked.
+* Также обдумывался вариант проброса сообщений из Lua в C# о том что пришла новая строка/и которую нужно прочитать, однако хорошего варианта не нашлось и не особо нужно (кроме как функции sendMessage с пом. которой можно было бы отправлять сообщение окну C#)
+}
+
+
+{$lua}
+
+function ATestFunction(strPtr)
+   if syntaxcheck then return end
+
+   local str = readString(strPtr, 512, true)
+   if(str ~= nul) then
+     showMessage('Hello, param is: '..str)
+   else
+     showMessage('Param is empty: ')
+   end
+   return 1092
+end
+
+function DebugPrint(str)
+  --print(str)
+end
+
+function GetStringUTF16ByPtr(strPtr, maxStrLength)
+  if syntaxcheck then return end
+
+  --[[
+  -- По какой-то причине Lua может вернуть строку с доп. пустыми байтами в конце, есть вероятность того, что таже строка в C# не будет иметь этих байтов, поэтому их хэши будут различаться
+  local str = readString(strPtr, maxStrLength, true)
+  -- #str возвращает размер строки, тоже что и string.len(str)
+  return str, #str * 2 -- умножение на 2, т.к. UTF16, на один символ приходится 2 байта
+  ]]
+
+  DebugPrint("---------- Начало считывания строки")
+  local tempStr = readBytes(strPtr, maxStrLength, true)
+  if(tempStr == nil) then
+    print("+!+!+!+!+!+!+!+!+!+!+!+!+!+! Не удалось прочитать ни одного байта по указателю на строку")
+	return nil, 0
+  end
+  local newStrTable = {}
+  local strTableSize = 0
+  local isOdd = true	--нечетный байт, т.е. первый байт одного символа в UTF16
+  local isPreviousByteZero = false
+  for i = 1, #tempStr do  -- #tempStr is the size of tempStr for lists.
+	currentByte = tempStr[i]
+
+	if(isOdd) then
+	  if(currentByte == 0) then
+	    isPreviousByteZero = true
+	  else
+	    isPreviousByteZero = false
+	  end
+	  isOdd = false
+	else
+	  if(currentByte == 0 and isPreviousByteZero) then -- если попались 2 пустых байта, тогда это line terminator
+	    DebugPrint("Предпоследний символ под номером: "..(i - 1).." удаляется: "..newStrTable[i - 1])
+		DebugPrint("Последний символ под номером: "..(i).." удаляется: "..currentByte)
+		newStrTable[i - 1] = nil -- удаление предыдущего байта т.к. он тоже часть line terminator
+		strTableSize = strTableSize - 1
+		break
+	  end
+	  isOdd = true
+	end
+
+	newStrTable[i] = currentByte
+	strTableSize = strTableSize + 1
+	DebugPrint(i..") "..string.format("%x", tempStr[i]))
+
+
+  end
+
+  local str = byteTableToWideString(newStrTable)
+  return str, strTableSize
+
+end
+
+function InitializeSharedMemoryLogic()
+  if syntaxcheck then return end
+
+  gSharedMemoryName = "SharedMemoryForSubtitlesStrs"
+  gSharedMemorySize = 8192	-- для дебага хорошо подходит 512
+  gSharedMemoryPtr = allocateSharedMemory(gSharedMemoryName, gSharedMemorySize)
+
+  print("==========")
+  gERROR_StopLogicFromExecuting = false
+  if(gSharedMemoryPtr == nil or gSharedMemoryPtr == 0) then
+    print("+!+!+!+!+!+!+!+!+!+!+!+!+!+! Не удалось выделить память, по крайней мере указатель на нее вернулся пустым")
+    print("P.S. Такое иногда случается. Нужно попробовать запустить сначала CE, а затем игру, а также поставить и снять breakpoint.")
+	gERROR_StopLogicFromExecuting = true
+	return
+  else
+    print("Выделенный указатель на shared memory: "..string.format("%x", gSharedMemoryPtr))
+    print("С именем: "..gSharedMemoryName.." и с размером: "..gSharedMemorySize)
+  end
+
+  if(gSharedMemorySize &lt; 64) then
+    print("+!+!+!+!+!+!+!+!+!+!+!+!+!+! Размер shared memory слишком мал, дабы точно удалось правильно выделить место под массив указателей, требуется больший размер")
+	gERROR_StopLogicFromExecuting = true
+	return
+  end
+
+  -- Тут выделяется память (а точнее н-ная часть от всей памяти выделенной под Shared memory) для указателей, так, чтобы макс. кол-во указателей в массиве примерно было равно макс. кол-ву строк,
+  -- рассчитывалось данное значение в Excel с учетом что одна строка занимает 84 байтов (значение примерное, строки в любом случае попадаются всегда разного размера, а кодировка также сильно влияет на ее размер)
+  local divider = 5	-- под массив указателей будет выделена 5-я часть от всей Shared memory
+  if(gSharedMemorySize &gt;= 2048) then divider = 10 end			-- в случае большого кол-ва памяти, достаточно и 10-й части Shared memory
+  gMaxMemorySizeForPointers = gSharedMemorySize // divider		-- двойное деление это деление с округлением вниз
+  gMaxMemorySizeForPointers = gMaxMemorySizeForPointers // 8	-- дабы память под указатели была кратна 8
+  gMaxMemorySizeForPointers = gMaxMemorySizeForPointers * 8		-- к прим. 1024 // 5 = 204.8, 204 // 8 = 25.5, 25 * 8 = 200 - это и есть память выделенная под массив указателей, в нее поместится 25 указателей
+  print("Выделенная память под указатели: "..gMaxMemorySizeForPointers)
+
+  logicFirstRun = true
+
+end
+
+function AddStringToSharedMemory(strPtr)
+  if syntaxcheck then return end
+
+  if(gERROR_StopLogicFromExecuting == true) then return end
+  if(gSharedMemoryPtr == 0 or gSharedMemoryPtr == nil) then
+    print("+!+!+!+!+!+!+!+!+!+!+!+!+!+! Shared memory по какой-то причине пуст, дальнейшая работа невозможна")
+    return
+  end
+
+  if(strPtr == 0) then
+    print("+!+!+!+!+!+!+!+!+!+!+!+!+!+! Указатель на строку оказался равен нулю, чтение строки невозможно")
+	return
+  end
+
+  local str, strLength = GetStringUTF16ByPtr(strPtr, 512)
+  if(strLength == nil or strLength == 0) then
+    print("+!+!+!+!+!+!+!+!+!+!+!+!+!+! Длина строки по какой-то причине оказалась равна 0, работа со строкой невозможна")
+	if(str ~= nil) then print("+!+!+!+!+!+!+!+!+!+!+!+!+!+! Строка: "..str) end
+  end
+  DebugPrint("==========")
+  DebugPrint("Указатель на строку: "..string.format("%x", strPtr))
+  DebugPrint(str)
+  strLength = strLength + 4	-- перед строкой идут 4 байта ее длины для удобства работы с ней C# части. Либо альтернативой можно было бы добавлять уже после строки line terminator в 2 байта (байты: 00 00)
+  DebugPrint("Длина строки вместе с первыми 4 байтами ее длины: "..strLength..", Без первых 4 байтов: "..strLength - 4)
+
+  if(strLength &gt;= gSharedMemorySize) then
+    print("+!+!+!+!+!+!+!+!+!+!+!+!+!+! Строка больше всей выделенной shared memory, по логике такого не может быть")
+    return
+  end
+
+  -- Первые 4 байта - байты lock, по ним (фактически одному байту) можно определить происходит ли сейчас запись в память
+  writeInteger(gSharedMemoryPtr, 1)
+  DebugPrint("Указатель на Shared memory: "..string.format("%x", gSharedMemoryPtr))
+
+  local counterPtr = gSharedMemoryPtr + 4
+  DebugPrint("Указатель на Counter: "..string.format("%x", counterPtr))
+  -- Это не только счетчик строк но и счетчик указателей на них
+  local stringsCounter = readInteger(counterPtr)
+  DebugPrint("Счетчик указателей/строк: "..stringsCounter)
+
+  -- Указатель на максимальное кол-во указателей на строки, т.е. на максимальное значение счетчика указателей
+  local maxCountOfPointersPtr = counterPtr + 4
+  local reserveInt32Ptr = maxCountOfPointersPtr + 4
+  -- Указатель на начало массива указателей на строки
+  local pointersArrPtr = reserveInt32Ptr + 4
+  DebugPrint("Указатель на начало массива указателей на строки: "..string.format("%x", pointersArrPtr))
+  -- Указатель на начало массива строк
+  local stringsArrPtr = pointersArrPtr + gMaxMemorySizeForPointers
+  DebugPrint("Указатель на начало массива строк: "..string.format("%x", stringsArrPtr))
+
+  -- Сработает лишь один раз в самом начале
+  if(logicFirstRun == true or logicFirstRun == nil) then
+    logicFirstRun = false
+
+	-- Записать макс. кол-ве указателей можно лишь один раз, меняться он соотв. не будет в течении работы программы
+	writeInteger(maxCountOfPointersPtr, gMaxMemorySizeForPointers / 8)
+
+	-- Первичная инициализация глобальной переменной указателя на адрес по которому нужно записывать очередную строку
+	gAddrAfterLastString = stringsArrPtr
+
+  end
+
+  if(stringsArrPtr + strLength &gt;= gSharedMemoryPtr + gSharedMemorySize) then
+    print("Строка оказалась больше выделенной памяти под строки, т.е. больше всего массива строк. Возможно это не единственная такая строка и требуется увеличить память")
+	return
+  end
+  -- Проверка выйдет ли записываемая строка за рамки выделенной именно для строк части памяти.
+  local doPointerSizeCheck = true
+  if(gAddrAfterLastString + strLength &gt;= gSharedMemoryPtr + gSharedMemorySize) then
+	DebugPrint("ПОСЛЕДНЯЯ строка в массиве строк, массив начинает заполняться заного, "..gAddrAfterLastString + strLength.." против "..gSharedMemoryPtr + gSharedMemorySize)
+	gAddrAfterLastString = stringsArrPtr
+	stringsCounter = 0
+	offsetForPointersArr = 0
+
+	doPointerSizeCheck = false
+  end
+
+  local offsetForPointersArr = 8 * stringsCounter
+  if(doPointerSizeCheck and offsetForPointersArr &gt; gMaxMemorySizeForPointers - 8) then
+    DebugPrint("ПОСЛЕДНИЙ элемент в массиве указателей, массив начинает заполняться заного")
+	gAddrAfterLastString = stringsArrPtr
+    stringsCounter = 0
+    offsetForPointersArr = 0
+  end
+
+
+  pointersArrPtr = pointersArrPtr + offsetForPointersArr
+  local offsetFromSharedMemoryBeginningForString = gAddrAfterLastString - gSharedMemoryPtr
+  writeQword(pointersArrPtr, offsetFromSharedMemoryBeginningForString)
+  DebugPrint("Указатель на Shared memory для записи указателя на строку: "..string.format("%x", pointersArrPtr))
+
+  DebugPrint("Указатель по которому нужно записать строку: "..string.format("%x", gAddrAfterLastString))
+  writeInteger(gAddrAfterLastString, strLength - 4)	-- запись длины непосредственно самой строки без первых 4 байт ее размера
+  writeString(gAddrAfterLastString + 4, str, true)
+
+  -- Судя по тем строкам что я видел, их аллокация обычно всегда выравнивается по 4 байтам, так строка длиною в 3 байта записывается в память с доп. байтом, а строка в 10 байтов, с доп. 2 и т.д.
+  -- Однако выравнивание в моем случае не особо нужно, но считается что это быстрее для производительности в части кэша и дебажить регион памяти в CE удобнее т.к. все выравнено
+  if(strLength % 4 ~= 0) then
+    -- К прим. строка в 9 байт, делим на 4 = 2.25, округляем вверх = 3, умножаем на 4 = 12, 12 - 9 = 3, это и есть оставшееся кол-во байт необходимых дописать для выравнивания
+    local alignFullLength = math.ceil(strLength / 4) * 4
+	local remainder = alignFullLength - strLength
+	local tempAddr = gAddrAfterLastString + strLength
+	for i = 1, remainder do
+	  if(tempAddr &gt;= gSharedMemoryPtr + gSharedMemorySize) then break end
+	  writeBytes(tempAddr, 0)	-- возможно быстрее будет создавать циклом таблицу и уже ее прокидывать в функцию, и функция одним махом будет записывать все байты
+	  tempAddr = tempAddr + 1
+	end
+	gAddrAfterLastString = tempAddr
+	DebugPrint("Для выравнивания были добавлены "..remainder.." байт")
+
+  else
+    gAddrAfterLastString = gAddrAfterLastString + strLength
+  end
+
+
+  stringsCounter = stringsCounter + 1
+  writeInteger(counterPtr, stringsCounter)
+
+  writeInteger(gSharedMemoryPtr, 0)
+
+end
+{$asm}
+
+
+loadlibrary(luaclient-x86_64.dll)
+luacall(openLuaServer('CELUASERVER'))
+
+CELUA_ServerName:
+db 'CELUASERVER',0
+
+// Данная аллокация стоит перед [ENABLE], она срабатывает и при включении и при выключении
+alloc(functionId,4)
+alloc(functionName,32)
+functionId:
+dd 0
+functionName:
+db 'AddStringToSharedMemory',0
+
+
+
+[ENABLE]
+{$lua}
+InitializeSharedMemoryLogic()
+{$asm}
+
+aobscanmodule(LUAFunctionCallTestInjection,Psychonauts2-Win64-Shipping.exe,66 41 83 3C 24 00 74 5D) // should be unique
+alloc(newmem,$1000,LUAFunctionCallTestInjection)
+
+label(hasRefId)
+label(code)
+label(return)
+
+newmem:
+  sub rsp,60                  // расширение стэка
+  mov [rsp+20],rcx            // backup регистров
+  mov [rsp+28],rdx
+  mov [rsp+30],r8
+  mov [rsp+38],r9
+  mov [rsp+40],r10
+  mov [rsp+48],r11
+  mov [rsp+50],rax
+
+  mov ecx,[functionId]        // кладем в ecx 4 байтный Id Lua функции, однако в первый раз он будет равен 0
+  test ecx,ecx                // проверяем равен ли Id нулю
+  jne short hasRefId          // если не равен нулю, тогда прыгаем сразу к вызову Lua функции по ее Id
+
+  mov rcx,functionName        // если равен нулю, вызываем спец. функцию которая выделяет и возвращает Id
+  call CELUA_GetFunctionReferenceFromName  //Basically calls createRef(functionName) and returns the value
+  mov [functionId],eax        // результат вернется в eax регистр, кладем значение по адресу lable-а
+  mov ecx,eax                 // ecx будет служить 1-м аргументом для функции, в нем будет храниться Id
+
+hasRefId:
+  // Тут используется Microsoft x64 calling convention почитать о котором можно в: https://en.wikipedia.org/wiki/X86_calling_conventions
+  // Параметры функции CELUA_ExecuteFunctionByReference можно посмотреть в: https://github.com/cheat-engine/cheat-engine/blob/master/Cheat%20Engine/bin/celua.txt#L3197
+
+  mov edx,1            // 2-й аргумент, в edx положится кол-во передаваемых аргументов в мою Lua функцию, в моем случае 1
+  lea r8,[rsp+58]      // 3-й аргумент, в r8 должен лечь указатель на массив аргументов для моей Lua функции (будем использовать стэк)
+  // в оригинальном коде по указателю в r12 лежит ссылка на строку субтитров
+  mov [r8],r12   	// аргумент для моей Lua функции (моя функция принимает один аргумент в виде указателя на строку) кладется в массив аргументов, в данном случае в стэк
+
+  mov r9,0             // 4-й аргумент, 0=no async, 1=async. В случае асинхр. вызова Lua функции, нельзя использовать GUI, к прим. showMessage
+  call CELUA_ExecuteFunctionByReference
+
+  mov rcx,[rsp+20]
+  mov rdx,[rsp+28]
+  mov r8,[rsp+30]
+  mov r9,[rsp+38]
+  mov r10,[rsp+40]
+  mov r11,[rsp+48]
+  mov rax,[rsp+50]
+  add rsp,60
+
+code:
+  cmp word ptr [r12],00
+  jmp return
+
+LUAFunctionCallTestInjection:
+  jmp newmem
+  nop
+
+return:
+
+
+registersymbol(LUAFunctionCallTestInjection)
+
+
+[DISABLE]
+{$lua}
+if syntaxcheck then return end
+
+-- К сожалению в Cheat Engine нет функции деаллокации Shared memory, поэтому не выходит понять деаллоцировалась ли память или нет
+-- т.к. глоабльная переменная указатель на Shared memory в любом случае не обнулится, по ней не понятно деаллоцировалась ли память или нет
+deAlloc(gSharedMemoryPtr, gSharedMemorySize)
+{$asm}
+
+LUAFunctionCallTestInjection:
+  db 66 41 83 3C 24 00
+
+unregistersymbol(LUAFunctionCallTestInjection)
+dealloc(newmem)
+
+{
+// ORIGINAL CODE - INJECTION POINT: Psychonauts2-Win64-Shipping.exe+18F3583
+
+Psychonauts2-Win64-Shipping.exe+18F3560: 4E 8D 24 50                 - lea r12,[rax+r10*2]
+Psychonauts2-Win64-Shipping.exe+18F3564: 4C 89 7C 24 50              - mov [rsp+50],r15
+Psychonauts2-Win64-Shipping.exe+18F3569: 2B FA                       - sub edi,edx
+Psychonauts2-Win64-Shipping.exe+18F356B: 48 C7 44 24 58 00 00 00 00  - mov qword ptr [rsp+58],00000000
+Psychonauts2-Win64-Shipping.exe+18F3574: 49 8B F7                    - mov rsi,r15
+Psychonauts2-Win64-Shipping.exe+18F3577: 45 8B F7                    - mov r14d,r15d
+Psychonauts2-Win64-Shipping.exe+18F357A: 4D 85 E4                    - test r12,r12
+Psychonauts2-Win64-Shipping.exe+18F357D: 74 69                       - je Psychonauts2-Win64-Shipping.exe+18F35E8
+Psychonauts2-Win64-Shipping.exe+18F357F: 85 FF                       - test edi,edi
+Psychonauts2-Win64-Shipping.exe+18F3581: 7E 65                       - jle Psychonauts2-Win64-Shipping.exe+18F35E8
+// ---------- INJECTING HERE ----------
+Psychonauts2-Win64-Shipping.exe+18F3583: 66 41 83 3C 24 00           - cmp word ptr [r12],00
+// ---------- DONE INJECTING  ----------
+Psychonauts2-Win64-Shipping.exe+18F3589: 74 5D                       - je Psychonauts2-Win64-Shipping.exe+18F35E8
+Psychonauts2-Win64-Shipping.exe+18F358B: 8D 57 01                    - lea edx,[rdi+01]
+Psychonauts2-Win64-Shipping.exe+18F358E: 48 8D 4C 24 50              - lea rcx,[rsp+50]
+Psychonauts2-Win64-Shipping.exe+18F3593: E8 D8 06 ED FE              - call Psychonauts2-Win64-Shipping.AK::WriteBytesCount::Reserve+F470
+Psychonauts2-Win64-Shipping.exe+18F3598: 8B 54 24 58                 - mov edx,[rsp+58]
+Psychonauts2-Win64-Shipping.exe+18F359C: 44 8B 7C 24 5C              - mov r15d,[rsp+5C]
+Psychonauts2-Win64-Shipping.exe+18F35A1: 44 8D 72 01                 - lea r14d,[rdx+01]
+Psychonauts2-Win64-Shipping.exe+18F35A5: 44 03 F7                    - add r14d,edi
+Psychonauts2-Win64-Shipping.exe+18F35A8: 44 89 74 24 58              - mov [rsp+58],r14d
+Psychonauts2-Win64-Shipping.exe+18F35AD: 45 3B F7                    - cmp r14d,r15d
+}
+</AssemblerScript>
+    </CheatEntry>
+  </CheatEntries>
+  <UserdefinedSymbols/>
+</CheatTable>
