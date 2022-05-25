@@ -1,2 +1,2 @@
 # MiniProjects
-Public miniproject
+Public miniprojects
