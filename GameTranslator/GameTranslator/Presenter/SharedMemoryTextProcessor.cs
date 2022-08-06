@@ -11,12 +11,10 @@ using System.Windows.Forms;
 
 namespace GameTranslator
 {
-
     class SharedMemoryTextProcessor
     {
-        const string SHARED_MEMORY_NAME = "SharedMemoryForSubtitlesStrs";   // в дальнейшем константу можно вынести в UI для возможности выбора имени пользователю
-        const int INIT_SHARED_MEMORY_SIZE = 32768;  // не играет роли, если Shared memory открывается, а не создается (в моем случае именно так и происходит, т.к. создает Shared memory Cheat Engine)
-
+        string sharedMemoryName = "SharedMemoryForSubtitlesStrs";   // в дальнейшем константу можно вынести в UI для возможности выбора имени пользователю
+        int initSharedMemorySize = 32768;       // не играет роли, если Shared memory открывается, а не создается (в моем случае именно так и происходит, т.к. создает Shared memory Cheat Engine)
         long openedSharedMemorySize;            // если Shared memory открывается, сюда положится ее реальный размер (указанный в Cheat Engine)
         MemoryMappedFile memoryMappedFile;
         MemoryMappedViewAccessor accessor;
@@ -43,7 +41,7 @@ namespace GameTranslator
                 MessageBox.Show("Runtime Translator в процессе завершения работы, требуется дождаться его завершения перед новым запуском.", "Error.", MessageBoxButtons.OK, MessageBoxIcon.Exclamation);
                 return false;
             }
-            memoryMappedFile = MemoryMappedFile.CreateOrOpen(SHARED_MEMORY_NAME, INIT_SHARED_MEMORY_SIZE);
+            memoryMappedFile = MemoryMappedFile.CreateOrOpen(sharedMemoryName, initSharedMemorySize);
             accessor = memoryMappedFile.CreateViewAccessor();
             openedSharedMemorySize = accessor.Capacity;
 
@@ -73,7 +71,8 @@ namespace GameTranslator
                 return;
             }
         }
-     
+
+        
         void BackgroundWorker_ProgressChanged(object sender, ProgressChangedEventArgs e)
         {
             if (e.UserState is List<string> listOfLines)
@@ -94,6 +93,7 @@ namespace GameTranslator
         }
         void BackgroundWorker_DoWork(object sender, DoWorkEventArgs e)
         {            
+
             int previousIndex = 0;
             int maxCountOfPointers = -1;
             List<string> listOfLines = new List<string>(32);
@@ -164,7 +164,7 @@ namespace GameTranslator
             }
 
         }
-
+        
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         string ReadLineByOffset(long offsetOfStringLength)
         {
@@ -173,7 +173,7 @@ namespace GameTranslator
             // Первыми 4 байтами в строке являются ее размер
             if(offsetOfStringLength + 4 + strLength > openedSharedMemorySize)
             {
-                throw new BadReadedStringLength(offsetOfStringLength, strLength);
+                throw new BadReadedStringLengthException(offsetOfStringLength, strLength);
             }
 
             if (tempBytesOfStr.Length < strLength) Array.Resize(ref tempBytesOfStr, strLength);
@@ -185,12 +185,12 @@ namespace GameTranslator
 
     }
 
-    class BadReadedStringLength : Exception
+    class BadReadedStringLengthException : Exception
     {
         const string ERROR_MESSAGE = "Кастомный OutOfMemoryException. Прочитанная длина строки оказалась слишком большой. Вероятно ошибка синхронизации.";
         public long OffsetOfStringLength { get; private set; }
         public int ReadedStrLength { get; private set; }
-        public BadReadedStringLength(long offsetOfStringLength, int readedStrLength) : base(ERROR_MESSAGE)
+        public BadReadedStringLengthException(long offsetOfStringLength, int readedStrLength) : base(ERROR_MESSAGE)
         {
             OffsetOfStringLength = offsetOfStringLength;
             ReadedStrLength = readedStrLength;
