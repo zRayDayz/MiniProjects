@@ -13,14 +13,15 @@ namespace GameTranslator
     public partial class TranslationForm : Form
     {
         Color formColorForTransparency;
+        uint formColorUInt32;
         Color initFormBackColor;
 
         bool isClickThroughAble = false;
         uint backupWindowLong;
 
-        IOnFormClosedEventSubscriber onFormClosedEventSubscriber;
+        BaseViewController baseViewController;
 
-        public TranslationForm(IOnFormClosedEventSubscriber onFormClosedEventSubscriber)
+        public TranslationForm(BaseViewController viewFacade)
         {
             InitializeComponent();
 
@@ -28,17 +29,18 @@ namespace GameTranslator
             this.SizeGripStyle = SizeGripStyle.Show;
 
             formColorForTransparency = Color.FromArgb(255, 0, 0);
+            formColorUInt32 = (uint)formColorForTransparency.ToArgb();
             this.TransparencyKey = formColorForTransparency;
 
             backupWindowLong = WinAPIWrapper.GetWindowLong(Handle, -20);
 
-            this.onFormClosedEventSubscriber = onFormClosedEventSubscriber;
+            this.baseViewController = viewFacade;
 
         }
 
         private void TranslationForm_FormClosed(object sender, FormClosedEventArgs e)
         {
-            onFormClosedEventSubscriber.OnFormClosed(this, e);
+            baseViewController.OnFormClosed(this, e);
         }
 
         public void ToggleTransparencyState()
@@ -75,8 +77,6 @@ namespace GameTranslator
             translationRichTextBox.ScrollToCaret();
             this.Refresh();
         }
-
-       
+      
     }
-
 }

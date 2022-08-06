@@ -12,7 +12,8 @@ namespace GameTranslator
 {
     public partial class MainForm : Form
     {
-        BaseTranslatorProcessor trProcessor;
+        BaseViewController baseViewController;
+        BaseTranslatorProcessor baseTranslator;
 
         Form translationWndPosHandleForm;
         Form translationWndSizeHandleForm;
@@ -22,11 +23,12 @@ namespace GameTranslator
             InitializeComponent();
         }
         
-        public MainForm(BaseTranslatorProcessor baseTranslator)
+        public MainForm(BaseViewController baseViewController, BaseTranslatorProcessor baseTranslator)
         {
             InitializeComponent();
 
-            this.trProcessor = baseTranslator;
+            this.baseViewController = baseViewController;
+            this.baseTranslator = baseTranslator;
 
             toolTip1.Active = false;
 
@@ -37,32 +39,33 @@ namespace GameTranslator
         void CreateNewTranslationWndPosHandleForm()
         {
             translationWndPosHandleForm = new Form();
-            //translationWndPosHandleForm.MaximumSize = new Size(5, 5);
             translationWndPosHandleForm.FormBorderStyle = FormBorderStyle.FixedToolWindow;
             translationWndPosHandleForm.Size = new Size(15, 15);
             translationWndPosHandleForm.ControlBox = false;
-            //translationWndPosHandleForm.ShowInTaskbar = false;
             translationWndPosHandleForm.MouseDown += translationWndPosHandleForm_MouseDown;
             translationWndPosHandleForm.MouseMove += translationWndPosHandleForm_MouseMove;
-            var trWindowPos = trProcessor.TranslationWindow.Location;
+            var trWindowPos = baseViewController.TranslationWindow.Location;
             translationWndPosHandleForm.Location = trWindowPos;
         }
         void CreateNewTranslationWndSizeHandleForm()
         {
             translationWndSizeHandleForm = new Form();
-            //translationWndSizeHandleForm.MaximumSize = new Size(5, 5);
             translationWndSizeHandleForm.FormBorderStyle = FormBorderStyle.FixedToolWindow;
             translationWndSizeHandleForm.Size = new Size(15, 15);
             translationWndSizeHandleForm.ControlBox = false;
-            //translationWndSizeHandleForm.ShowInTaskbar = false;
             translationWndSizeHandleForm.MouseDown += translationWndSizeHandleForm_MouseDown;
             translationWndSizeHandleForm.MouseMove += translationWndSizeHandleForm_MouseMove;
-            var trWndPos = trProcessor.TranslationWindow.Location;
-            var trWndSize = trProcessor.TranslationWindow.Size;
+            var trWndPos = baseViewController.TranslationWindow.Location;
+            var trWndSize = baseViewController.TranslationWindow.Size;
             var sizeHandlePos = new Point(trWndPos.X + trWndSize.Width, trWndPos.Y + trWndSize.Height);
             translationWndSizeHandleForm.Location = sizeHandlePos;
         }
 
+        public void UpdateTranslatorStatus(bool isWorking)
+        {
+            if (isWorking) translatorStatusLabel.Text = "Is Working";
+            else translatorStatusLabel.Text = "Is Stopped";
+        }
 
         private void openOrigFileBtn_Click(object sender, EventArgs e)
         {
@@ -70,7 +73,6 @@ namespace GameTranslator
             if (openFileDialog1.ShowDialog() != DialogResult.OK) return;
 
             string filePath = openFileDialog1.FileName;
-            trProcessor.InitOriginalStringsFilePath(filePath);
             origFilePathTextBox.Text = filePath;
         }
 
@@ -80,39 +82,40 @@ namespace GameTranslator
             if (openFileDialog1.ShowDialog() != DialogResult.OK) return;
 
             string filePath = openFileDialog1.FileName;
-            trProcessor.InitTranslatedStringsFilePath(filePath);
             translFilePathTextBox.Text = filePath;
         }
 
         private void initTranslationDataBtn_Click(object sender, EventArgs e)
         {
-            bool result = trProcessor.GenerateTranslationData();
+            string origFilePathText = origFilePathTextBox.Text;
+            string translFilePathText = translFilePathTextBox.Text;
+            if (origFilePathText == "" || translFilePathText == "")
+            {
+                MessageBox.Show("Нужно выбрать оба файла, с ориг. строками и строками переведенными.", "Error.", MessageBoxButtons.OK, MessageBoxIcon.Exclamation);
+                return;
+            }
+            bool result = baseTranslator.GenerateTranslationData(origFilePathTextBox.Text, translFilePathTextBox.Text);
             if (result) translatorInitStatusLabel.Text = "Initialized";
         }
 
         private void startBtn_Click(object sender, EventArgs e)
         {
-            if (trProcessor.RunTranslator())
+            if (baseTranslator.RunTranslator())
             {
                 UpdateTranslatorStatus(true);
             }
         }
         private void stopBtn_Click(object sender, EventArgs e)
         {
-            if (trProcessor.StopTranslator())
+            if (baseTranslator.StopTranslator())
             {
                 UpdateTranslatorStatus(false);
             }
         }
-        public void UpdateTranslatorStatus(bool isWorking)
-        {
-            if(isWorking) translatorStatusLabel.Text = "Is Working";
-            else translatorStatusLabel.Text = "Is Stopped";
-        }
 
         private void setTranslationWindowTransparency_Click(object sender, EventArgs e)
         {
-            trProcessor.ToggleTranslationWindowTransparency();
+            baseViewController.ToggleTranslationWindowTransparency();
         }
 
         private void toggleTooltipBtn_Click(object sender, EventArgs e)
@@ -133,7 +136,7 @@ namespace GameTranslator
         {
             if (translationWndPosHandleForm.Disposing || translationWndPosHandleForm.IsDisposed) CreateNewTranslationWndPosHandleForm();           
             translationWndPosHandleForm.Visible = !translationWndPosHandleForm.Visible;
-            var trWindowPos = trProcessor.TranslationWindow.Location;
+            var trWindowPos = baseViewController.TranslationWindow.Location;
             translationWndPosHandleForm.Location = trWindowPos;
             translationWndPosHandleForm.TopMost = true;
         }
@@ -150,7 +153,7 @@ namespace GameTranslator
         private void translationWndPosHandleForm_MouseMove(object sender, MouseEventArgs e)
         {
             var posHandle = sender as Control;
-            if (MouseButtons.Left == MouseButtons)   // передвижение кнопки только при зажатой левой и правой кнопки мыши
+            if (MouseButtons.Left == MouseButtons)
             {
                 int xDiffr = e.X - lastMouseLocation.X;
                 int yDiffr = e.Y - lastMouseLocation.Y;
@@ -158,7 +161,7 @@ namespace GameTranslator
                 posHandle.Left = xDiffr + posHandle.Left;
                 posHandle.Top = yDiffr + posHandle.Top;
 
-                trProcessor.TranslationWindow.Location = posHandle.Location;
+                baseViewController.TranslationWindow.Location = posHandle.Location;
 
                 if(translationWndSizeHandleForm != null)
                 {
@@ -167,7 +170,6 @@ namespace GameTranslator
                     newPos.Y += yDiffr;
                     translationWndSizeHandleForm.Location = newPos;
                 }
-                
             }
         }
 
@@ -175,8 +177,8 @@ namespace GameTranslator
         {
             if (translationWndSizeHandleForm.Disposing || translationWndSizeHandleForm.IsDisposed) CreateNewTranslationWndPosHandleForm();
             translationWndSizeHandleForm.Visible = !translationWndSizeHandleForm.Visible;
-            var trWndPos = trProcessor.TranslationWindow.Location;
-            var trWndSize = trProcessor.TranslationWindow.Size;
+            var trWndPos = baseViewController.TranslationWindow.Location;
+            var trWndSize = baseViewController.TranslationWindow.Size;
             var sizeHandlePos = new Point(trWndPos.X + trWndSize.Width - 7, trWndPos.Y + trWndSize.Height - 100);
             translationWndSizeHandleForm.Location = sizeHandlePos;
             translationWndSizeHandleForm.TopMost = true;
@@ -193,28 +195,23 @@ namespace GameTranslator
         private void translationWndSizeHandleForm_MouseMove(object sender, MouseEventArgs e)
         {
             var sizeHandle = sender as Control;
-            if (MouseButtons.Left == MouseButtons)   // передвижение кнопки только при зажатой левой и правой кнопки мыши
+            if (MouseButtons.Left == MouseButtons)
             {
-                // В коде ниже учитывается момент, когда окно становится своего минимального размера, дабы handle не смог уйти левее или выше окна 
-                // P.S.немного выше уйти может, т.к. в начальной позиции handle выставлен небольшой оффсет
-
                 int xDiffr = e.X - lastMouseLocation.X;
                 int yDiffr = e.Y - lastMouseLocation.Y;
 
-                // К сожалению опираться на свойство MinimumSize окна нельзя, т.к. оно не показывает настоящего минимального размера,
-                // поэтому приходится расчитывать новый размер, устанавливать его окну, забирать его и смотреть изменился ли он или нет
-                Size oldTrWndSize = trProcessor.TranslationWindow.Size;
+                Size oldTrWndSize = baseViewController.TranslationWindow.Size;
                 Size tempNewTrWndSize = new Size(oldTrWndSize.Width + xDiffr, oldTrWndSize.Height + yDiffr);
 
-                trProcessor.TranslationWindow.Size = tempNewTrWndSize;
+                baseViewController.TranslationWindow.Size = tempNewTrWndSize;
 
-                Size newTrWndSize = trProcessor.TranslationWindow.Size;
+                Size newTrWndSize = baseViewController.TranslationWindow.Size;
                 
-                if (newTrWndSize.Width == oldTrWndSize.Width)   // окно достигло минимальной ширины
+                if (newTrWndSize.Width == oldTrWndSize.Width)
                 {
                     xDiffr = 0;
                 }
-                if (newTrWndSize.Height == oldTrWndSize.Height) // окно достигло минимальной высоты
+                if (newTrWndSize.Height == oldTrWndSize.Height)
                 {
                     yDiffr = 0;
                 }
@@ -222,14 +219,14 @@ namespace GameTranslator
                 Point handlePos = sizeHandle.Location;
                 sizeHandle.Location = new Point(handlePos.X + xDiffr, handlePos.Y + yDiffr);
 
-                trProcessor.TranslationWindow.Refresh();
+                baseViewController.TranslationWindow.Refresh();
             }
             
         }
 
         private void MainForm_FormClosed(object sender, FormClosedEventArgs e)
         {
-            trProcessor.OnFormClosed(this, e);
+            baseViewController.OnFormClosed(this, e);
         }
     }
 }
