@@ -49,6 +49,8 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="Model\TranslationFileProcessor.cs" />
+    <Compile Include="Tools\CommonHelpers.cs" />
     <Compile Include="View\MainForm.cs">
       <SubType>Form</SubType>
     </Compile>
@@ -66,7 +68,8 @@
       <DependentUpon>TranslationForm.cs</DependentUpon>
     </Compile>
     <Compile Include="Presenter\TranslatorProcessor.cs" />
-    <Compile Include="Presenter\WinAPIWrapper.cs" />
+    <Compile Include="Tools\WinAPIWrapper.cs" />
+    <Compile Include="View\ViewController.cs" />
     <EmbeddedResource Include="View\MainForm.resx">
       <DependentUpon>MainForm.cs</DependentUpon>
     </EmbeddedResource>

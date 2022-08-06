@@ -8,13 +8,19 @@ namespace GameTranslator
 {
     static class Program
     {
+        
+        /// <summary>
+        /// Главная точка входа для приложения.
+        /// </summary>
         [STAThread]
         static void Main()
         {
             Application.EnableVisualStyles();
-            Application.SetCompatibleTextRenderingDefault(false);      
+            Application.SetCompatibleTextRenderingDefault(false);
 
-            var translatorProcessor = new TranslatorProcessor();
+            var viewController = new ViewController();
+            var translationFileProcessor = new TranslationFileProcessor();
+            var translatorProcessor = new TranslatorProcessor(viewController, translationFileProcessor);
 
             Application.Run();
         }
