@@ -49,7 +49,7 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="Model\TranslationFileProcessor.cs" />
+    <Compile Include="Data\TranslationFileProcessor.cs" />
     <Compile Include="Tools\CommonHelpers.cs" />
     <Compile Include="View\MainForm.cs">
       <SubType>Form</SubType>
