@@ -2,6 +2,7 @@
 Public miniprojects
 
 # Architecture
+The complete diagram lies at the root of the project
 ```mermaid
 ---
 title: Simplified class diagram
